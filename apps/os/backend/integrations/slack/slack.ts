@@ -407,7 +407,7 @@ export async function saveSlackUserMapping(
   member: NonNullable<UsersListResponse["members"]>[number],
 ) {
   await db.transaction(async (tx) => {
-    if (!member.id || !member.profile?.email || member.deleted) {
+    if (!member.id || !member.profile?.email || member.deleted || !member.team_id) {
       return;
     }
     const existingMapping = await tx.query.providerUserMapping.findFirst({
@@ -415,6 +415,23 @@ export async function saveSlackUserMapping(
         eq(schema.providerUserMapping.providerId, "slack-bot"),
         eq(schema.providerUserMapping.externalId, member.id),
       ),
+    });
+
+    const userTeam = await db.query.providerEstateMapping.findFirst({
+      where: eq(schema.providerEstateMapping.externalId, member.team_id),
+      columns: {},
+      with: {
+        internalEstate: {
+          columns: {},
+          with: {
+            organization: {
+              columns: {
+                id: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (existingMapping) {
@@ -431,6 +448,17 @@ export async function saveSlackUserMapping(
           providerMetadata: member,
         })
         .where(eq(schema.providerUserMapping.id, existingMapping.id));
+
+      if (member.is_restricted === false && member.is_ultra_restricted === false && userTeam) {
+        await tx
+          .insert(schema.organizationUserMembership)
+          .values({
+            organizationId: userTeam.internalEstate.organization.id,
+            userId: existingMapping.internalUserId,
+            role: "member",
+          })
+          .onConflictDoNothing();
+      }
       return;
     }
 
@@ -454,6 +482,17 @@ export async function saveSlackUserMapping(
         providerMetadata: member,
       });
 
+      if (member.is_restricted === false && member.is_ultra_restricted === false && userTeam) {
+        await tx
+          .insert(schema.organizationUserMembership)
+          .values({
+            organizationId: userTeam.internalEstate.organization.id,
+            userId: existingUser.id,
+            role: "member",
+          })
+          .onConflictDoNothing();
+      }
+
       return;
     }
     const newUser = await tx
@@ -472,6 +511,17 @@ export async function saveSlackUserMapping(
       externalId: member.id,
       providerMetadata: member,
     });
+
+    if (member.is_restricted === false && member.is_ultra_restricted === false && userTeam) {
+      await tx
+        .insert(schema.organizationUserMembership)
+        .values({
+          organizationId: userTeam.internalEstate.organization.id,
+          userId: newUser[0].id,
+          role: "member",
+        })
+        .onConflictDoNothing();
+    }
   });
 }
 

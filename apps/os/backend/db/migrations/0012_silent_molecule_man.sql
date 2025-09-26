@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "organization_user_membership_organization_id_user_id_index" ON "organization_user_membership" USING btree ("organization_id","user_id");
