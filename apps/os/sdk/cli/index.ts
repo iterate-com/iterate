@@ -27,4 +27,4 @@ if (process.argv.length === 2) {
 }
 
 const cli = createCli({ router });
-if (process.argv) cli.run({ prompts });
+cli.run({ prompts });
