@@ -17,7 +17,8 @@ export default [
     route("estate", "./routes/estate.tsx"),
     route("agents", "./routes/agents-index.tsx"),
     route("agents/start-slack", "./routes/agents.start-slack.tsx"),
-    route("agents/:agentClassName/:durableObjectName", "./routes/agents.tsx"),
+    route("agents/offline", "./routes/offline-agent-detail.tsx"),
+    route("agents/:agentClassName/:durableObjectName", "./routes/online-agent-detail.tsx"),
   ]),
 
   // Catch-all route for 404

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from "react";
-import { useNavigate } from "react-router";
-import { Bot, ChevronUp, ChevronDown, Search } from "lucide-react";
+import { useNavigate, Link } from "react-router";
+import { Bot, ChevronUp, ChevronDown, Search, Upload } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Button } from "../components/ui/button.tsx";
@@ -217,36 +217,55 @@ export default function AgentsIndexPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 pt-4">
-      <Card className="bg-muted/30">
-        <CardHeader>
-          <CardTitle>Create New Agent</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-2 relative">
-            <div className="relative flex-1">
-              <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                <Bot size={16} className="text-muted-foreground" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card className="bg-muted/30">
+          <CardHeader>
+            <CardTitle>Create New Agent</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2 relative">
+              <div className="relative flex-1">
+                <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
+                  <Bot size={16} className="text-muted-foreground" />
+                </div>
+                <Input
+                  id="agent-name"
+                  ref={inputRef}
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                  placeholder="Enter agent durable object instance name"
+                  className="flex-1 pl-10"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      handleNavigate();
+                    }
+                  }}
+                />
               </div>
-              <Input
-                id="agent-name"
-                ref={inputRef}
-                value={agentName}
-                onChange={(e) => setAgentName(e.target.value)}
-                placeholder="Enter agent durable object instance name"
-                className="flex-1 pl-10"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleNavigate();
-                  }
-                }}
-              />
+              <Button onClick={handleNavigate} disabled={!agentName.trim()}>
+                Go
+              </Button>
             </div>
-            <Button onClick={handleNavigate} disabled={!agentName.trim()}>
-              Go
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-muted/30">
+          <CardHeader>
+            <CardTitle>View Offline Trace</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Link to={getEstateUrl("agents/offline")}>
+              <Button variant="outline" className="w-full">
+                <Upload className="h-4 w-4 mr-2" />
+                Load Exported Trace
+              </Button>
+            </Link>
+            <p className="text-xs text-muted-foreground mt-2">
+              Load and view an exported agent trace archive
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
         <CardContent className="pt-6">

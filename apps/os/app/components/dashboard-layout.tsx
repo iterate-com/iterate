@@ -246,7 +246,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   return (
     <SidebarProvider defaultOpen={true}>
-      <div className="flex min-h-screen w-full">
+      <div className="flex min-h-screen w-full overflow-x-hidden">
         <Sidebar className="border-r">
           <SidebarContent>
             <SidebarHeader>
@@ -305,13 +305,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </SidebarFooter>
         </Sidebar>
 
-        <SidebarInset>
+        <SidebarInset className="overflow-x-hidden">
           <header className="flex h-16 items-center gap-4 border-b px-6">
             <SidebarTrigger />
             {/* TODO Breadcrumbs */}
           </header>
 
-          <main>{children}</main>
+          <main className="overflow-x-hidden">{children}</main>
         </SidebarInset>
       </div>
     </SidebarProvider>

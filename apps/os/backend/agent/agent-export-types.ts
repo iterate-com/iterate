@@ -1,12 +1,14 @@
 import z from "zod";
 import type { AgentCoreEvent, AugmentedCoreReducedState } from "./agent-core-schemas.ts";
 
+// TODO: put these in the right place
+//  and fix the schemas and types
 export interface AgentTraceExportMetadata {
   estateId: string;
   estateName: string;
   agentInstanceId: string;
   agentInstanceName: string;
-  agentClassName: string;
+  agentClassName: "IterateAgent" | "SlackAgent";
   debugUrl: string;
   braintrustParentSpanExportedId?: string;
   braintrustPermalink?: string;
@@ -35,7 +37,7 @@ export const AgentTraceExportMetadataSchema = z.object({
   estateName: z.string(),
   agentInstanceId: z.string(),
   agentInstanceName: z.string(),
-  agentClassName: z.string(),
+  agentClassName: z.enum(["IterateAgent", "SlackAgent"]),
   debugUrl: z.string(),
   braintrustParentSpanExportedId: z.string().optional(),
   braintrustPermalink: z.string().optional(),
@@ -45,9 +47,9 @@ export const AgentTraceExportMetadataSchema = z.object({
 });
 
 export const FileMetadataSchema = z.object({
-  filename: z.string(),
-  mimeType: z.string().optional(),
-  size: z.number().optional(),
+  filename: z.string().nullable(),
+  mimeType: z.string().nullable(),
+  fileSize: z.number().nullable(),
 });
 
 export const AgentTraceExportSchema = z.object({
