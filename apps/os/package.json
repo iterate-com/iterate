@@ -50,6 +50,7 @@
     "drizzle-orm": "^0.44.5",
     "embla-carousel-react": "^8.6.0",
     "expect-type": "^1.2.2",
+    "fflate": "^0.8.2",
     "glob": "^11.0.0",
     "hono": "^4.9.7",
     "isbot": "^5.1.30",

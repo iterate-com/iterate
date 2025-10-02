@@ -7,7 +7,12 @@ import { z } from "zod";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { CloudflareEnv } from "../env.ts";
 import { getDb, type DB } from "./db/client.ts";
-import { uploadFileHandler, uploadFileFromURLHandler, getFileHandler } from "./file-handlers.ts";
+import {
+  uploadFileHandler,
+  uploadFileFromURLHandler,
+  getFileHandler,
+  getExportHandler,
+} from "./file-handlers.ts";
 import { getAuth, type Auth, type AuthSession } from "./auth/auth.ts";
 import { appRouter } from "./trpc/root.ts";
 import { createContext } from "./trpc/context.ts";
@@ -112,6 +117,8 @@ app.post("/api/estate/:estateId/files", uploadFileHandler);
 app.post("/api/estate/:estateId/files/from-url", uploadFileFromURLHandler);
 
 app.get("/api/files/:id", getFileHandler);
+
+app.get("/api/estate/:estateId/exports/:exportId", getExportHandler);
 
 // Mount the Slack integration app
 app.route("/api/integrations/slack", slackApp);

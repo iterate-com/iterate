@@ -2,9 +2,13 @@ import pMemoize from "p-suite/p-memoize";
 import { Agent as CloudflareAgent } from "agents";
 import { formatDistanceToNow } from "date-fns";
 import { z } from "zod/v4";
+import { zipSync, strToU8 } from "fflate";
+import { typeid } from "typeid-js";
+import { permalink as getPermalink } from "braintrust/browser";
 
 // Parent directory imports
 import { and, eq } from "drizzle-orm";
+import type { AgentTraceExport, FileMetadata } from "./agent-export-types.ts";
 import * as R from "remeda";
 import { waitUntil } from "cloudflare:workers";
 import Replicate from "replicate";
@@ -15,7 +19,7 @@ import { PosthogCloudflare } from "../utils/posthog-cloudflare.ts";
 import type { JSONSerializable } from "../utils/type-helpers.ts";
 
 // Local imports
-import { agentInstance, agentInstanceRoute } from "../db/schema.ts";
+import { agentInstance, agentInstanceRoute, files } from "../db/schema.ts";
 export type AgentInstanceDatabaseRecord = typeof agentInstance.$inferSelect & {
   contextRules: ContextRule[];
 };
@@ -866,6 +870,117 @@ export class IterateAgent<Slices extends readonly AgentCoreSlice[] = CoreAgentSl
   // get the braintrust parent span exported id from the state
   async getBraintrustParentSpanExportedId() {
     return this.state.braintrustParentSpanExportedId;
+  }
+
+  async exportTrace(): Promise<string> {
+    const exportId = typeid("export").toString();
+    const events = this.getEvents();
+    const estate = await this.getEstate();
+
+    const fileIds = new Set<string>();
+    for (const event of events) {
+      if (event.type === "CORE:FILE_SHARED" && event.data?.iterateFileId) {
+        fileIds.add(event.data.iterateFileId);
+      }
+    }
+
+    const fileMap: Record<
+      string,
+      {
+        content: Uint8Array;
+        metadata: FileMetadata;
+      }
+    > = {};
+
+    for (const fileId of fileIds) {
+      const r2Key = `files/${fileId}`;
+      const object = await this.env.ITERATE_FILES.get(r2Key);
+
+      if (!object) {
+        throw new Error(`File not found in storage: ${fileId}`);
+      }
+
+      const response = new Response(object.body);
+      const arrayBuffer = await response.arrayBuffer();
+      const [fileRecord] = await this.db.select().from(files).where(eq(files.id, fileId)).limit(1);
+
+      if (!fileRecord) {
+        throw new Error(`File record not found for export: ${fileId}`);
+      }
+
+      if (fileRecord.status !== "completed") {
+        throw new Error(`File record not completed for export: ${fileId}`);
+      }
+
+      fileMap[fileId] = {
+        content: new Uint8Array(arrayBuffer),
+        metadata: fileRecord,
+      };
+    }
+
+    let braintrustPermalink: string | undefined;
+    if (this.state.braintrustParentSpanExportedId) {
+      try {
+        braintrustPermalink = await getPermalink(this.state.braintrustParentSpanExportedId);
+      } catch (error) {
+        console.warn("Failed to get Braintrust permalink:", error);
+      }
+    }
+
+    const debugUrl = `${this.env.VITE_PUBLIC_URL}/${this.databaseRecord.estateId}/agents/${this.databaseRecord.className}/${this.databaseRecord.durableObjectName}`;
+    const posthogTraceId = `${this.constructor.name}-${this.name}`;
+
+    const reducedStateSnapshots: Record<number, any> = {};
+    for (let i = 0; i < events.length; i++) {
+      reducedStateSnapshots[i] = await this.getReducedStateAtEventIndex(i);
+    }
+    const exportData: AgentTraceExport = {
+      version: "1.0.0",
+      exportedAt: new Date().toISOString(),
+      metadata: {
+        estateId: this.databaseRecord.estateId,
+        estateName: estate.name,
+        agentInstanceId: this.databaseRecord.id,
+        agentInstanceName: this.databaseRecord.durableObjectName,
+        agentClassName: this.databaseRecord.className,
+        debugUrl,
+        braintrustParentSpanExportedId: this.state.braintrustParentSpanExportedId,
+        braintrustPermalink,
+        posthogTraceId,
+        eventCount: events.length,
+        fileCount: Object.keys(fileMap).length,
+      },
+      events,
+      fileMetadata: Object.fromEntries(
+        Object.entries(fileMap).map(([id, { metadata }]) => [id, metadata]),
+      ),
+      reducedStateSnapshots,
+    };
+
+    const archiveFiles: Record<string, Uint8Array> = {
+      "export.json": strToU8(JSON.stringify(exportData, null, 2)),
+    };
+
+    for (const [fileId, { content }] of Object.entries(fileMap)) {
+      archiveFiles[`files/${fileId}`] = content;
+    }
+
+    const compressed = zipSync(archiveFiles, { level: 6 });
+
+    const r2Key = `exports/${exportId}.zip`;
+    await this.env.ITERATE_FILES.put(r2Key, compressed, {
+      httpMetadata: {
+        contentType: "application/zip",
+      },
+      customMetadata: {
+        exportId,
+        estateId: this.databaseRecord.estateId,
+        exportedAt: new Date().toISOString(),
+      },
+    });
+
+    const downloadUrl = `/api/estate/${this.databaseRecord.estateId}/exports/${exportId}`;
+    return downloadUrl;
   }
 
   // get the braintrust parent span exported id from the state

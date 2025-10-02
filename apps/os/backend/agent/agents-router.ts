@@ -170,6 +170,14 @@ export const agentsRouter = router({
       return { permalink };
     }),
 
+  exportTrace: agentStubProcedure
+    .meta({ description: "Export agent trace to a downloadable archive" })
+    .output(z.object({ downloadUrl: z.string() }))
+    .mutation(async ({ ctx }) => {
+      const downloadUrl = await ctx.agent.exportTrace();
+      return { downloadUrl };
+    }),
+
   addEvents: agentStubProcedure
     .meta({ description: "Add one or more events to an agent instance" })
     .input(

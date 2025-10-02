@@ -10,6 +10,7 @@ import {
   Circle,
   Clock,
   Copy,
+  Download,
   Paperclip,
   Pause,
   Play,
@@ -1193,7 +1194,7 @@ function CoreEventRenderer({
             {isImage && (
               <div className="mb-3">
                 <img
-                  src={`/api/estate/${estateId}/files/${iterateFileId}`}
+                  src={`/api/files/${iterateFileId}`}
                   alt={originalFilename || "Shared image"}
                   className="max-w-full h-auto rounded border"
                   style={{ maxHeight: "400px" }}
@@ -1242,6 +1243,18 @@ function CoreEventRenderer({
                   <span className="font-mono text-xs">{openAIFileId}</span>
                 </div>
               )}
+            </div>
+
+            <div className="mt-3 pt-3 border-t">
+              <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
+                <a
+                  href={`/api/files/${iterateFileId}?disposition=attachment`}
+                  download={originalFilename || "file"}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download File
+                </a>
+              </Button>
             </div>
           </AlertDescription>
         </Alert>
@@ -1822,6 +1835,21 @@ export default function AgentsPage() {
 
   // Mutations
   const addEventsMutation = useMutation(trpc.agents.addEvents.mutationOptions({}));
+  const exportTraceMutation = useMutation(
+    trpc.agents.exportTrace.mutationOptions({
+      onSuccess: async (data) => {
+        const link = document.createElement("a");
+        link.href = data.downloadUrl;
+        link.download = `agent-trace-${durableObjectName}-${Date.now()}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      },
+      onError: (error) => {
+        console.error("Failed to export trace:", error);
+      },
+    }),
+  );
 
   // Get current reduced state
   const { data: reducedState } = useQuery(
@@ -2006,6 +2034,35 @@ export default function AgentsPage() {
         </Link>
 
         <div className="flex items-center gap-2 ml-auto">
+          {/* Export Trace Button */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  exportTraceMutation.mutate({
+                    estateId,
+                    agentInstanceName: durableObjectName,
+                    agentClassName,
+                  });
+                }}
+                disabled={exportTraceMutation.isPending}
+                className="h-7 px-2"
+              >
+                {exportTraceMutation.isPending ? (
+                  <Clock className="h-3 w-3 mr-1 animate-spin" />
+                ) : (
+                  <Download className="h-3 w-3 mr-1" />
+                )}
+                <span className="text-xs">Export</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Export agent trace as zip archive</p>
+            </TooltipContent>
+          </Tooltip>
+
           {/* Pause/Resume Agent Button */}
           <PauseResumeButton
             isPaused={reducedState?.paused || false}
