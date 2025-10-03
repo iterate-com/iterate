@@ -88,6 +88,29 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Pricing section */}
+        <section className="mt-20 mb-20" id="pricing">
+          <h2 className="text-2xl font-bold mb-8">Super simple pricing</h2>
+          <div className="max-w-3xl">
+            <div className="border border-black p-8 bg-white">
+              <div className="text-3xl font-bold mb-6">Raw token cost + 50%</div>
+              <div className="space-y-4 text-gray-700">
+                <p className="text-lg">
+                  <strong>$50 free usage per month</strong> during beta
+                </p>
+                <p>Charged at the end of each month. No surprises, no hidden fees.</p>
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  <p className="text-sm text-gray-600">
+                    <strong>Why we think this is fair:</strong> You can see all the tokens and
+                    traces yourself. You have full control over the system prompt, so if you think
+                    we're not being economical with tokens, you can customize it however you like.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="mt-2 sm:mt-4 mb-20">
           <h2 className="text-2xl font-bold mb-8">How I work</h2>
           <div className="prose text-gray-700">
@@ -101,8 +124,26 @@ export default function Home() {
                 Linear, Notion, and more.
               </li>
               <li>
-                <strong>Fine-tune my behaviour:</strong> Customise me using natural language, just
-                add rules/*.md in a git repo you control.
+                <strong>Cursor rules for the entire company:</strong> Add rules and tools in your
+                own GitHub repository (see our{" "}
+                <a
+                  href="https://github.com/iterate-com/estate-template"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-gray-900"
+                >
+                  template repo
+                </a>{" "}
+                or{" "}
+                <a
+                  href="https://github.com/iterate-com/iterate/tree/main/estates/iterate"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-gray-900"
+                >
+                  iterate's own iterate repo
+                </a>
+                ).
               </li>
             </ul>
           </div>
