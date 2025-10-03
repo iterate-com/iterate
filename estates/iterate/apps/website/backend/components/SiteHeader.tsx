@@ -12,15 +12,20 @@ export default function SiteHeader() {
           </div>
           <div className="flex items-center gap-4">
             <Navigation />
-            <a
-              href="https://github.com/iterate-com/iterate"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gray-600 hover:text-gray-900 transition-colors"
-              aria-label="View source on GitHub"
-            >
-              <GitHubIcon size={20} />
-            </a>
+            <div className="flex items-center gap-2">
+              <a
+                href="https://github.com/iterate-com/iterate"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-gray-600 hover:text-gray-900 transition-colors"
+                aria-label="View source on GitHub"
+              >
+                <GitHubIcon size={20} />
+              </a>
+              <span className="text-xs font-semibold text-gray-500 border border-gray-300 rounded px-2 py-0.5">
+                BETA
+              </span>
+            </div>
           </div>
         </nav>
       </div>

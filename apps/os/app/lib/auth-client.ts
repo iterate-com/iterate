@@ -1,5 +1,6 @@
 import { createAuthClient } from "better-auth/react";
 import { adminClient } from "better-auth/client/plugins";
+import { stripeClient } from "@better-auth/stripe/client";
 import { integrationsClientPlugin } from "./integrations-client.ts";
 
 export const authClient = createAuthClient({

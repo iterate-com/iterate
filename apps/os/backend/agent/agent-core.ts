@@ -31,6 +31,7 @@ import { mergeDeep } from "remeda";
 import { stripNonSerializableProperties } from "../utils/schema-helpers.ts";
 import type { JSONSerializable } from "../utils/type-helpers.ts";
 import type { TagLogger } from "../tag-logger.ts";
+import { env } from "../../env.ts";
 import { deepCloneWithFunctionRefs } from "./deep-clone-with-function-refs.ts";
 import {
   AgentCoreEvent,

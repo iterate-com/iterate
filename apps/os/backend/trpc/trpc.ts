@@ -1,6 +1,6 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import { prettifyError, z, ZodError } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { organizationUserMembership } from "../db/schema.ts";
 import type { DB } from "../db/client.ts";
 import { invalidateOrganizationQueries, notifyOrganization } from "../utils/websocket-utils.ts";
@@ -175,6 +175,29 @@ export async function notifyOrganizationFromContext(
       },
     );
   }
+}
+
+// Helper function to get user's organization access
+export async function getUserOrganizationAccess(
+  db: DB,
+  userId: string,
+  organizationId: string,
+): Promise<{ hasAccess: boolean; organization: any | null }> {
+  const membership = await db.query.organizationUserMembership.findFirst({
+    where: and(
+      eq(organizationUserMembership.userId, userId),
+      eq(organizationUserMembership.organizationId, organizationId),
+    ),
+    with: {
+      organization: true,
+    },
+  });
+
+  if (!membership) {
+    return { hasAccess: false, organization: null };
+  }
+
+  return { hasAccess: true, organization: membership.organization };
 }
 
 // Helper function to get user's estate if they have access
