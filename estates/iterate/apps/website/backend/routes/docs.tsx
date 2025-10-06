@@ -1,6 +1,6 @@
 import { redirect, useLoaderData } from "react-router";
 import { getSortedDocsPages } from "../lib/docs.ts";
-import BlogLayout from "../components/BlogLayout.tsx";
+import BlogLayout from "../components/blog-layout.tsx";
 
 export async function loader() {
   const pages = await getSortedDocsPages();

@@ -2,7 +2,7 @@ import { useLoaderData } from "react-router";
 import { getSortedChangelogEntries } from "../lib/changelog.ts";
 import { markdownToHtml } from "../lib/mdx.ts";
 import { formatDate } from "../utils/date.ts";
-import BlogLayout from "../components/BlogLayout.tsx";
+import BlogLayout from "../components/blog-layout.tsx";
 
 export async function loader() {
   const entries = await getSortedChangelogEntries();

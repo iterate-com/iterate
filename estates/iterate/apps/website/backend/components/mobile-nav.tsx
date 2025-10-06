@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { useLocation } from "react-router";
 import { cn } from "../utils/cn.ts";
-import { Link } from "./Link.tsx";
-import Logo from "./Logo.tsx";
+import { Link } from "./link.tsx";
+import Logo from "./logo.tsx";
 
 export default function MobileNav() {
   const [open, setOpen] = useState(false);

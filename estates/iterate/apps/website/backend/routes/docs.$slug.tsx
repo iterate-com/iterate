@@ -1,8 +1,8 @@
 import { useLoaderData } from "react-router";
 import { getDocPage, getSortedDocsPages } from "../lib/docs.ts";
 import { markdownToHtml } from "../lib/mdx.ts";
-import BlogLayout from "../components/BlogLayout.tsx";
-import { Link } from "../components/Link.tsx";
+import BlogLayout from "../components/blog-layout.tsx";
+import { Link } from "../components/link.tsx";
 
 export async function loader({ params }: { params: { slug: string } }) {
   const [page, allPages] = await Promise.all([getDocPage(params.slug), getSortedDocsPages()]);

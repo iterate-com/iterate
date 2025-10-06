@@ -1,6 +1,6 @@
 import { useLocation } from "react-router";
 import { cn } from "../utils/cn.ts";
-import { Link } from "./Link.tsx";
+import { Link } from "./link.tsx";
 
 export default function Navigation() {
   const { pathname } = useLocation();

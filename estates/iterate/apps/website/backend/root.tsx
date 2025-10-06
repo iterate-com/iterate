@@ -1,6 +1,6 @@
 import "./globals.css";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
-import { PostHogProvider } from "./components/PostHogProvider.tsx";
+import { PostHogProvider } from "./components/posthog-provider.tsx";
 import { ThemeProvider } from "./components/theme-provider.tsx";
 import { Toaster } from "./components/ui/toaster.tsx";
 import ogImage from "./assets/og-image.png?url";

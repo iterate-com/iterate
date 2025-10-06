@@ -1,7 +1,7 @@
 import { useLoaderData } from "react-router";
 import { getRoadmapData } from "../lib/roadmap.ts";
 import { markdownToHtml } from "../lib/mdx.ts";
-import BlogLayout from "../components/BlogLayout.tsx";
+import BlogLayout from "../components/blog-layout.tsx";
 
 export async function loader() {
   const roadmap = await getRoadmapData();

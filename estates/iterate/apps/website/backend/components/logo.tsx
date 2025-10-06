@@ -1,5 +1,5 @@
 import logoAsset from "../assets/logo.svg?url";
-import { Link } from "./Link.tsx";
+import { Link } from "./link.tsx";
 
 interface LogoProps {
   width?: number;

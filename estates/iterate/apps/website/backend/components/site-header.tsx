@@ -1,9 +1,9 @@
-import Logo from "./Logo.tsx";
-import Navigation from "./Navigation.tsx";
+import Logo from "./logo.tsx";
+import Navigation from "./navigation.tsx";
 import MobileNav from "./mobile-nav.tsx";
 import CommandMenu from "./command-menu.tsx";
 import { ModeToggle } from "./mode-toggle.tsx";
-import { GitHubIcon, TwitterIcon } from "./Icons.tsx";
+import { GitHubIcon, TwitterIcon } from "./icons.tsx";
 
 export default function SiteHeader() {
   return (
