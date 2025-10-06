@@ -1,29 +1,32 @@
 import { useLocation } from "react-router";
-import { FileText } from "lucide-react";
+import { cn } from "../utils/cn.ts";
 import { Link } from "./Link.tsx";
 
 export default function Navigation() {
   const { pathname } = useLocation();
   const navItems = [
-    // { href: "/#pricing", label: "Pricing" }, // hidden for now
-    { href: "/blog", icon: FileText, ariaLabel: "Blog" },
+    { href: "/docs", label: "Docs" },
+    { href: "/changelog", label: "Changelog" },
+    { href: "/roadmap", label: "Roadmap" },
+    { href: "/blog", label: "Blog" },
   ];
 
   return (
-    <nav className="flex items-center gap-4 sm:gap-6 text-sm flex-wrap">
+    <nav className="flex items-center gap-6 text-sm">
       {navItems.map((item) => {
-        const isActive = pathname.startsWith(item.href.replace("/#", "/"));
-        const Icon = item.icon;
+        const isActive = pathname.startsWith(item.href);
         return (
           <Link
             key={item.href}
             to={item.href}
-            variant="subtle"
-            className="font-medium"
+            variant="none"
+            className={cn(
+              "transition-colors hover:text-foreground/80",
+              isActive ? "text-foreground font-medium" : "text-foreground/60",
+            )}
             aria-current={isActive ? "page" : undefined}
-            aria-label={item.ariaLabel}
           >
-            {Icon ? <Icon size={18} /> : item.ariaLabel}
+            {item.label}
           </Link>
         );
       })}
