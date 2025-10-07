@@ -6,6 +6,8 @@ title: Getting Started
 
 Welcome to the documentation! This is your first page.
 
+![Sample Image](images/sample-image.svg)
+
 ## Installation
 
 To get started, install the package:

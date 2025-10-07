@@ -10,7 +10,7 @@ export async function loader({ params }: { params: { slug: string } }) {
   if (!post) {
     throw new Response("Not Found", { status: 404 });
   }
-  const contentHtml = await markdownToHtml(post.content);
+  const contentHtml = await markdownToHtml(post.content, "blog");
   return { post, contentHtml };
 }
 

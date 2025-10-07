@@ -8,7 +8,7 @@ export async function loader() {
   if (!roadmap) {
     throw new Response("Not Found", { status: 404 });
   }
-  const contentHtml = await markdownToHtml(roadmap.content);
+  const contentHtml = await markdownToHtml(roadmap.content, "roadmap");
   return { roadmap, contentHtml };
 }
 

@@ -37,6 +37,31 @@ app.all("/ingest/*", async (c) => {
   return proxy(targetUrl, { ...c.req });
 });
 
+app.get("/content-images/*", async (c) => {
+  const url = new URL(c.req.url);
+  const imagePath = url.pathname.replace("/content-images/", "");
+
+  try {
+    const images = import.meta.glob("../content/**/*.{png,jpg,jpeg,gif,svg,webp}", {
+      eager: false,
+      query: "?url",
+      import: "default",
+    });
+
+    const imageKey = `../content/${imagePath}`;
+    const imageImport = images[imageKey];
+
+    if (imageImport) {
+      const imageUrl = (await imageImport()) as string;
+      return c.redirect(imageUrl);
+    }
+  } catch (error) {
+    console.error("Error loading image:", error);
+  }
+
+  return c.notFound();
+});
+
 // React Router fallback for 404s
 app.notFound((c) => {
   return requestHandler(c.req.raw);

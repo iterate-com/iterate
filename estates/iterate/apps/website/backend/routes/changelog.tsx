@@ -9,7 +9,7 @@ export async function loader() {
   const entriesWithHtml = await Promise.all(
     entries.map(async (entry) => ({
       date: entry.date,
-      contentHtml: await markdownToHtml(entry.content),
+      contentHtml: await markdownToHtml(entry.content, "changelog"),
     })),
   );
   return { entries: entriesWithHtml };
