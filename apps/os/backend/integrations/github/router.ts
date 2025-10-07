@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import type { CloudflareEnv } from "../../../env";
+import { env, type CloudflareEnv } from "../../../env.ts";
 import type { Variables } from "../../worker";
 import * as schema from "../../db/schema.ts";
 import { logger } from "../../tag-logger.ts";
@@ -208,15 +208,17 @@ githubApp.post("/webhook", async (c) => {
       return c.json({ message: "Event not on configured branch" }, 200);
     }
 
+    let installationToken: string | null = null;
     // Get the GitHub installation for this estate
     const githubInstallation = await getGithubInstallationForEstate(c.var.db, estate.id);
-    if (!githubInstallation) {
-      logger.error(`No GitHub installation found for estate ${estate.id}`);
-      return c.json({ error: "GitHub installation not found" }, 500);
-    }
 
-    // Get an installation access token
-    const installationToken = await getGithubInstallationToken(githubInstallation.accountId);
+    // If there is a GitHub installation, use it
+    // Otherwise, use the fallback token
+    if (githubInstallation) {
+      installationToken = await getGithubInstallationToken(githubInstallation.accountId);
+    } else {
+      installationToken = env.GITHUB_ESTATE_TOKEN;
+    }
 
     // Construct the repository URL
     const repoUrl = event.repository?.html_url || event.repository?.url;

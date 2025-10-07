@@ -13,7 +13,7 @@ import {
   triggerGithubBuild,
 } from "../../integrations/github/github-utils.ts";
 import type { DB } from "../../db/client.ts";
-import type { CloudflareEnv } from "../../../env.ts";
+import { env, type CloudflareEnv } from "../../../env.ts";
 
 // Helper function to trigger a rebuild for a given commit
 export async function triggerEstateRebuild(params: {
@@ -37,12 +37,12 @@ export async function triggerEstateRebuild(params: {
 
   // Get the GitHub installation
   const githubInstallation = await getGithubInstallationForEstate(db, estateId);
-  if (!githubInstallation) {
-    throw new Error("GitHub installation not found for this estate");
+  let installationToken: string;
+  if (githubInstallation) {
+    installationToken = await getGithubInstallationToken(githubInstallation.accountId);
+  } else {
+    installationToken = env.GITHUB_ESTATE_TOKEN;
   }
-
-  // Get installation token
-  const installationToken = await getGithubInstallationToken(githubInstallation.accountId);
 
   // Get repository details
   const repoResponse = await fetch(
@@ -211,12 +211,14 @@ export const estateRouter = router({
 
       // Get the GitHub installation
       const githubInstallation = await getGithubInstallationForEstate(ctx.db, estateId);
-      if (!githubInstallation) {
-        throw new Error("GitHub installation not found for this estate");
+      let installationToken: string;
+      if (githubInstallation) {
+        installationToken = await getGithubInstallationToken(githubInstallation.accountId);
+      } else {
+        installationToken = env.GITHUB_ESTATE_TOKEN;
       }
 
       // Get installation token
-      const installationToken = await getGithubInstallationToken(githubInstallation.accountId);
 
       // GitHub API response schemas
       const GitHubCommitResponse = z.object({

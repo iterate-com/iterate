@@ -1521,13 +1521,15 @@ export class IterateAgent<Slices extends readonly AgentCoreSlice[] = CoreAgentSl
       .limit(1)
       .then((rows) => rows[0]);
 
-    if (!githubInstallation) {
-      throw new Error("No GitHub installation found for this estate");
+    let githubToken: string | null = null;
+    // If there is a GitHub installation, use it
+    // Otherwise, use the fallback token
+    if (githubInstallation) {
+      const { getGithubInstallationToken } = await import("../integrations/github/github-utils.ts");
+      githubToken = await getGithubInstallationToken(githubInstallation.accountId);
+    } else {
+      githubToken = env.GITHUB_ESTATE_TOKEN;
     }
-
-    // Get installation token
-    const { getGithubInstallationToken } = await import("../integrations/github/github-utils.ts");
-    const githubToken = await getGithubInstallationToken(githubInstallation.accountId);
 
     // Fetch repository details using Octokit
     const { Octokit } = await import("octokit");

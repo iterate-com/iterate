@@ -166,6 +166,7 @@ export const organization = pgTable("organization", (t) => ({
   id: iterateId("org"),
   name: t.text().notNull(),
   stripeCustomerId: t.text(),
+  hasOnboarded: t.boolean().notNull().default(false),
   ...withTimestamps,
 }));
 export const organizationRelations = relations(organization, ({ many }) => ({

@@ -9,7 +9,7 @@ import {
 import { useMutation } from "@tanstack/react-query";
 import { AlertCircle, Home } from "lucide-react";
 import { asc, eq } from "drizzle-orm";
-import { getDb } from "../../../backend/db/client.ts";
+import { getDb, schema } from "../../../backend/db/client.ts";
 import { getAuth } from "../../../backend/auth/auth.ts";
 import { estate } from "../../../backend/db/schema.ts";
 import { getUserOrganizationAccess } from "../../../backend/trpc/trpc.ts";
@@ -160,14 +160,9 @@ export function ErrorBoundary() {
 }
 
 async function isOrganizationOnboarded(db: ReturnType<typeof getDb>, organizationId: string) {
-  const firstEstate = await db.query.estate.findFirst({
-    where: eq(estate.organizationId, organizationId),
-    orderBy: asc(estate.createdAt),
+  const org = await db.query.organization.findFirst({
+    where: eq(schema.organization.id, organizationId),
   });
-
-  if (!firstEstate) {
-    return false;
-  }
-
-  return Boolean(firstEstate.connectedRepoId);
+  if (!org) return false;
+  return Boolean(org.hasOnboarded);
 }

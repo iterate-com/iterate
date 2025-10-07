@@ -183,4 +183,21 @@ export const organizationRouter = router({
 
       return updatedMembership;
     }),
+
+  onboard: orgAdminProcedure.mutation(async ({ ctx }) => {
+    const [updatedOrganization] = await ctx.db
+      .update(schema.organization)
+      .set({ hasOnboarded: true })
+      .where(eq(schema.organization.id, ctx.organization.id))
+      .returning();
+
+    if (!updatedOrganization) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Failed to onboard organization",
+      });
+    }
+
+    return updatedOrganization;
+  }),
 });

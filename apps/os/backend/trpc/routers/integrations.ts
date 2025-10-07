@@ -21,6 +21,7 @@ import {
   getSlackAccessTokenForEstate,
 } from "../../auth/token-utils.ts";
 import { getRoutingKey } from "../../integrations/slack/slack.ts";
+import { env } from "../../../env.ts";
 
 // Define the integration providers we support
 const INTEGRATION_PROVIDERS = {
@@ -381,34 +382,36 @@ export const integrationsRouter = router({
     let repoName: string | null = null;
     let repoFullName: string | null = null;
 
-    if (githubInstallation) {
-      try {
-        const token = await getGithubInstallationToken(githubInstallation.accountId);
+    try {
+      const token = githubInstallation?.accountId
+        ? await getGithubInstallationToken(githubInstallation.accountId).catch(
+            () => env.GITHUB_ESTATE_TOKEN,
+          )
+        : env.GITHUB_ESTATE_TOKEN;
 
-        // Fetch repository details from GitHub API
-        const repoResponse = await fetch(
-          `https://api.github.com/repositories/${githubRepo.connectedRepoId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "User-Agent": "Iterate OS",
-              Accept: "application/vnd.github+json",
-            },
+      // Fetch repository details from GitHub API
+      const repoResponse = await fetch(
+        `https://api.github.com/repositories/${githubRepo.connectedRepoId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "User-Agent": "Iterate OS",
+            Accept: "application/vnd.github+json",
           },
-        );
+        },
+      );
 
-        if (repoResponse.ok) {
-          const repoData = (await repoResponse.json()) as { name: string; full_name: string };
-          repoName = repoData.name;
-          repoFullName = repoData.full_name;
-        } else {
-          logger.error(
-            `Failed to fetch repository details: ${repoResponse.status} ${repoResponse.statusText}`,
-          );
-        }
-      } catch (error) {
-        logger.error("Error fetching repository details:", error);
+      if (repoResponse.ok) {
+        const repoData = (await repoResponse.json()) as { name: string; full_name: string };
+        repoName = repoData.name;
+        repoFullName = repoData.full_name;
+      } else {
+        logger.error(
+          `Failed to fetch repository details: ${repoResponse.status} ${repoResponse.statusText}`,
+        );
       }
+    } catch (error) {
+      logger.error("Error fetching repository details:", error);
     }
 
     return {
@@ -419,6 +422,7 @@ export const integrationsRouter = router({
       path: githubRepo.connectedRepoPath || "/",
     };
   }),
+  // TODO: Fix this so that people can add their own custom repositories only
   setGithubRepoForEstate: estateProtectedProcedure
     .input(
       z.object({

@@ -1,10 +1,31 @@
 import { waitUntil } from "cloudflare:workers";
 import dedent from "dedent";
+import { Octokit } from "octokit";
+import { generateUsername } from "unique-username-generator";
 import { env } from "../env.ts";
 import type { DB } from "./db/client.ts";
 import * as schema from "./db/schema.ts";
 import { logger } from "./tag-logger.ts";
 import { sendNotificationToIterateSlack } from "./integrations/slack/slack-utils.ts";
+
+export const createGithubRepoInEstatePool = async (orgName?: string) => {
+  const gh = new Octokit({ auth: env.GITHUB_ESTATE_TOKEN });
+  const repoName = generateUsername("-");
+
+  const repo = await gh.rest.repos.createUsingTemplate({
+    name: repoName,
+    template_owner: "iterate-com",
+    template_repo: "estate-template",
+    owner: "iterate-estates",
+    private: true,
+    description: `${orgName}`,
+  });
+
+  if (repo.status !== 201 || !repo.data) {
+    throw new Error(`Failed to create repository: ${JSON.stringify(repo.data)}`);
+  }
+  return repo.data;
+};
 
 // Function to create organization and estate for new users
 export const createUserOrganizationAndEstate = async (
@@ -49,11 +70,16 @@ export const createUserOrganizationAndEstate = async (
     role: "owner",
   });
 
+  const repo = await createGithubRepoInEstatePool(userName);
+
   const [estate] = await db
     .insert(schema.estate)
     .values({
       name: `${userName}'s Estate`,
       organizationId: organization.id,
+      connectedRepoId: repo.id,
+      connectedRepoRef: repo.default_branch,
+      connectedRepoPath: `/`,
     })
     .returning();
 
