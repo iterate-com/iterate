@@ -3,7 +3,6 @@ import { Menu, X } from "lucide-react";
 import { useLocation } from "react-router";
 import { cn } from "../utils/cn.ts";
 import { Link } from "./link.tsx";
-import Logo from "./logo.tsx";
 
 export default function MobileNav() {
   const [open, setOpen] = useState(false);
@@ -29,7 +28,6 @@ export default function MobileNav() {
       {open && (
         <div className="fixed inset-0 top-14 z-50 grid h-[calc(100vh-3.5rem)] grid-flow-row auto-rows-max overflow-auto p-6 pb-32 shadow-md animate-in slide-in-from-bottom-80 md:hidden bg-background">
           <div className="relative z-20 grid gap-6 rounded-md bg-popover p-4 text-popover-foreground shadow-md">
-            <Logo width={32} height={32} />
             <nav className="grid grid-flow-row auto-rows-max text-sm">
               {navItems.map((item) => {
                 const isActive = pathname.startsWith(item.href);

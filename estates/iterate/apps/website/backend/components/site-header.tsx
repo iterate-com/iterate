@@ -7,7 +7,7 @@ import { GitHubIcon, TwitterIcon } from "./icons.tsx";
 
 export default function SiteHeader() {
   return (
-    <header className="sticky top-0 z-50 w-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-50 w-full bg-background">
       <div className="max-w-7xl mx-auto px-6 sm:px-8 md:px-10 h-14 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <Logo width={32} height={32} />
