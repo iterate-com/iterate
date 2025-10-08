@@ -294,6 +294,151 @@ export const integrationsPlugin = () =>
           return ctx.json({ url });
         },
       ),
+      callbackSlackSearch: createAuthEndpoint(
+        "/integrations/callback/slack-search",
+        {
+          method: "GET",
+          query: z.object({
+            error: z.string().optional(),
+            error_description: z.string().optional(),
+            code: z.string(),
+            state: z.string(),
+          }),
+          use: [sessionMiddleware],
+        },
+        async (ctx) => {
+          const { code, state: stateId, error, error_description } = ctx.query;
+          const session = ctx.context.session;
+
+          if (error) {
+            return ctx.json(
+              {
+                error: "OAuth authorization failed",
+                details: { error, error_description },
+              },
+              { status: 400 },
+            );
+          }
+
+          const {
+            env,
+            var: { db },
+          } = getContext<{ Variables: Variables; Bindings: CloudflareEnv }>();
+
+          const value = await ctx.context.internalAdapter.findVerificationValue(stateId);
+          if (!value) {
+            return ctx.json({ error: "Invalid state" }, { status: 400 });
+          }
+
+          const stateData = JSON.parse(value.value);
+          const callbackURL = stateData.callbackURL || import.meta.env.VITE_PUBLIC_URL;
+          const agentDurableObject = stateData.agentDurableObject;
+
+          const estateId = stateData.estateId;
+
+          await ctx.context.internalAdapter.deleteVerificationValue(stateId);
+
+          const redirectURI = `${env.VITE_PUBLIC_URL}/api/auth/integrations/callback/slack-search`;
+          const unauthedSlackClient = new WebClient();
+
+          const tokens = await unauthedSlackClient.oauth.v2.access({
+            client_id: env.SLACK_CLIENT_ID,
+            client_secret: env.SLACK_CLIENT_SECRET,
+            code: code,
+            redirect_uri: redirectURI,
+          });
+
+          if (!tokens || !tokens.ok || !tokens.authed_user || !tokens.authed_user.access_token) {
+            return ctx.json({ error: "Failed to get tokens", details: tokens.error });
+          }
+
+          const userSlackClient = new WebClient(tokens.authed_user.access_token);
+          const userInfo = await userSlackClient.users.identity({});
+
+          if (
+            !userInfo ||
+            !userInfo.ok ||
+            !userInfo.user ||
+            !userInfo.user.email ||
+            !userInfo.user.id
+          ) {
+            return ctx.json({ error: "Failed to get user info", details: userInfo.error });
+          }
+
+          if (userInfo.user.email !== session.user.email) {
+            return ctx.json({ error: "User mismatch" }, { status: 403 });
+          }
+
+          const existingSearchAccount = await db.query.account.findFirst({
+            where: and(
+              eq(schema.account.providerId, "slack-search"),
+              eq(schema.account.userId, session.user.id),
+            ),
+          });
+
+          let accountId: string;
+          if (existingSearchAccount) {
+            await ctx.context.internalAdapter.updateAccount(existingSearchAccount.id, {
+              accessToken: tokens.authed_user.access_token,
+              scope: "search:read",
+              accountId: userInfo.user.id,
+            });
+            accountId = existingSearchAccount.id;
+          } else {
+            const newAccount = await ctx.context.internalAdapter.createAccount({
+              providerId: "slack-search",
+              accountId: userInfo.user.id,
+              userId: session.user.id,
+              accessToken: tokens.authed_user.access_token,
+              scope: "search:read",
+            });
+            accountId = newAccount.id;
+          }
+
+          if (estateId) {
+            const existingPermission = await db.query.estateAccountsPermissions.findFirst({
+              where: and(
+                eq(schema.estateAccountsPermissions.accountId, accountId),
+                eq(schema.estateAccountsPermissions.estateId, estateId),
+              ),
+            });
+
+            if (!existingPermission) {
+              await db.insert(schema.estateAccountsPermissions).values({
+                accountId,
+                estateId,
+              });
+            }
+          }
+
+          if (agentDurableObject) {
+            const params = {
+              db,
+              agentInstanceName: agentDurableObject.durableObjectName,
+            };
+            const agentStub = await SlackAgent.getStubByName(params);
+
+            await agentStub.addEvents([
+              {
+                type: "CORE:LLM_INPUT_ITEM",
+                data: {
+                  type: "message",
+                  role: "developer",
+                  content: [
+                    {
+                      type: "input_text",
+                      text: "The user has granted Slack search permissions. Please retry the search query now.",
+                    },
+                  ],
+                },
+                triggerLLMRequest: true,
+              },
+            ]);
+          }
+
+          return ctx.redirect(callbackURL);
+        },
+      ),
       callbackSlack: createAuthEndpoint(
         "/integrations/callback/slack-bot",
         {

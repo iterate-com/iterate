@@ -186,6 +186,7 @@ export const defaultContextRules = defineRules([
       iterateAgentTool.listMyReminders(),
       iterateAgentTool.cancelReminder(),
       slackAgentTool.stopRespondingUntilMentioned(),
+      slackAgentTool.searchSlackHistory(),
       slackAgentTool.addSlackReaction(),
       slackAgentTool.removeSlackReaction(),
       slackAgentTool.updateSlackMessage(),
