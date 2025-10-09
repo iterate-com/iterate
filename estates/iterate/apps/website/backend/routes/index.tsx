@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import SiteHeader from "../components/SiteHeader.tsx";
-import SiteFooter from "../components/SiteFooter.tsx";
-import Member from "../components/Member.tsx";
-import Investors from "../components/Investors.tsx";
-import { Button } from "../components/Button.tsx";
+import SiteHeader from "../components/site-header.tsx";
+import SiteFooter from "../components/site-footer.tsx";
+import Member from "../components/member.tsx";
+import Investors from "../components/investors.tsx";
+import { Button } from "../components/button.tsx";
 import DisplayCards from "../components/ui/display-cards.tsx";
-import CalendarModal from "../components/CalendarModal.tsx";
+import CalendarModal from "../components/calendar-modal.tsx";
 import jonasImg from "../assets/jonas.jpg?url";
 import zakImg from "../assets/zak.png?url";
 import francineImg from "../assets/francine.png?url";
