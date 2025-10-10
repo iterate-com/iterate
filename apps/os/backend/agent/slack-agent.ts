@@ -2,6 +2,7 @@ import type { SlackEvent } from "@slack/types";
 import { WebClient } from "@slack/web-api";
 import { and, asc, eq, or, inArray } from "drizzle-orm";
 import pDebounce from "p-suite/p-debounce";
+import type { ResponseStreamEvent } from "openai/resources/responses/responses.mjs";
 import { env as _env, env } from "../../env.ts";
 import { logger } from "../tag-logger.ts";
 import { getSlackAccessTokenForEstate } from "../auth/token-utils.ts";
@@ -66,16 +67,197 @@ export class SlackAgent extends IterateAgent<SlackAgentSlices> implements ToolsI
 
   protected slackAPI!: WebClient;
 
-  private updateSlackStatusDebounced = pDebounce(async (status: string | null) => {
+  protected _lastTypingStatus: string | null | undefined;
+
+  // ---------------------------------------------------------------------------
+  // Slack status indicator queue
+  // ---------------------------------------------------------------------------
+  // Design notes:
+  // - Show every unique status received, in arrival order (drop only immediate duplicates)
+  // - Process the whole queue within a target window using dynamic spacing per batch
+  // - Debounce the sender so we don't flood the Slack API when statuses arrive rapidly
+  //   (first send may be delayed by SEND_DEBOUNCE_MS to consolidate bursts)
+  // - If called with null, delay clearing briefly (NULL_STAGE1_DELAY_MS then check again at
+  //   NULL_CHECK_AT_MS) and only clear if there is still no LLM request in progress
+  // - On DO boot, we set status to null immediately (handled in onStart)
+
+  // Configurable timings local to this file
+  // QUEUE_DRAIN_TARGET_WINDOW_MS: Aim to process the ENTIRE current queue snapshot within this window.
+  //   Example: if 10 items are queued and window=500ms, we sleep ~50ms between sends.
+  //   If 30 items are queued, spacing becomes ~16ms to still finish the batch within ~500ms.
+  // SEND_DEBOUNCE_MS: Debounce for starting the drain; consolidates bursts to protect the Slack API.
+  private readonly QUEUE_DRAIN_TARGET_WINDOW_MS = 500;
+  private readonly SEND_DEBOUNCE_MS = 50;
+  // STATUS_AUTO_CLEAR_MS: After we set any non-null status, if after this delay there is
+  // no work left (empty queue) and no LLM request, we clear the status to avoid it getting stuck.
+  private readonly STATUS_AUTO_CLEAR_MS = 500;
+  // As a safety fallback, if a status somehow lingers (e.g. upstream state says "busy" forever),
+  // force-clear after this TTL regardless.
+  private readonly STATUS_HARD_CLEAR_TTL_MS = 10000;
+  // The old two-stage null-clear delays are removed in favor of the robust auto-clear below.
+
+  // Internal queue state
+  private _statusQueue: Array<{ status: string | null; scheduleAutoClear: boolean }> = [];
+  private _queueRunning = false;
+  private _lastEnqueuedStatus: string | null | undefined = undefined;
+  private _autoClearTimer?: ReturnType<typeof setTimeout>;
+  private _lastStatusSetAtMs = 0;
+
+  // Debounced trigger for draining the queue. This prevents us from starting a new
+  // drain too often when many statuses are enqueued rapidly.
+  private _startDrainDebounced = pDebounce(async () => {
+    if (this._queueRunning) return;
+    this._queueRunning = true;
+    try {
+      await this._drainStatusQueue();
+    } finally {
+      this._queueRunning = false;
+      // If new items arrived while draining, schedule another pass (debounced).
+      if (this._statusQueue.length > 0) {
+        void this._startDrainDebounced();
+      }
+    }
+  }, this.SEND_DEBOUNCE_MS);
+
+  private updateSlackStatusDebounced = (
+    status: string | null,
+    options?: { forceImmediate?: boolean; scheduleAutoClear?: boolean },
+  ) => {
+    // If forceImmediate: prioritize this status now (clear queue and push first)
+    if (options?.forceImmediate) {
+      this._statusQueue.length = 0;
+      this._lastEnqueuedStatus = undefined;
+      this._enqueueStatus(status, options?.scheduleAutoClear ?? true);
+      return;
+    }
+
+    this._enqueueStatus(status, options?.scheduleAutoClear ?? true);
+  };
+
+  private _enqueueStatus(status: string | null, scheduleAutoClear: boolean) {
+    // Choice 5A: ignore if same as most recent enqueued status
+    if (status === this._lastEnqueuedStatus) {
+      return;
+    }
+    this._lastEnqueuedStatus = status;
+    this._statusQueue.push({ status, scheduleAutoClear });
+    // Debounced start to consolidate bursts
+    void this._startDrainDebounced();
+  }
+
+  private async _drainStatusQueue() {
+    // Drain the queue in batches. For each loop pass, snapshot the current queue size and
+    // compute a per-item delay so the entire snapshot completes within QUEUE_DRAIN_TARGET_WINDOW_MS.
+    // If new items arrive during drain, they will be handled by a subsequent debounced pass.
+    while (this._statusQueue.length > 0) {
+      const snapshotSize = this._statusQueue.length;
+      const perItemDelayMs = Math.max(
+        0,
+        Math.floor(this.QUEUE_DRAIN_TARGET_WINDOW_MS / Math.max(1, snapshotSize)),
+      );
+
+      // Process exactly 'snapshotSize' items for this pass, spacing them out evenly.
+      for (let i = 0; i < snapshotSize; i++) {
+        const next = this._statusQueue.shift();
+        if (!next) break;
+
+        await this._sendStatusToSlack(next.status, { scheduleAutoClear: next.scheduleAutoClear });
+
+        // Space out sends to finish this batch within the target window.
+        if (perItemDelayMs > 0 && i < snapshotSize - 1) {
+          await new Promise((resolve) => setTimeout(resolve, perItemDelayMs));
+        }
+      }
+      // Loop continues if more items were enqueued during this pass.
+    }
+  }
+
+  private async _sendStatusToSlack(
+    status: string | null,
+    options?: { forceSendEvenIfSame?: boolean; scheduleAutoClear?: boolean },
+  ) {
     const { slackChannelId, slackThreadId } = this.getReducedState() as SlackSliceState;
     if (!slackChannelId || !slackThreadId) return;
 
-    await this.slackAPI.assistant.threads.setStatus({
-      channel_id: slackChannelId,
-      thread_ts: slackThreadId,
-      status: status || "",
-    });
-  }, 300);
+    // If this is the same as the last value sent to Slack, skip the API call
+    if (!options?.forceSendEvenIfSame && status === this._lastTypingStatus) return;
+    this._lastTypingStatus = status;
+
+    try {
+      // Slack's new status API cycles through provided strings (loading_messages) while the
+      // status is visible. Notes:
+      // - Newlines are not supported; emojis are fine
+      // - Cycles IN ORDER, so you can do animations
+      // - Max 10 elements; multiple spaces collapse; no markdown
+      // - On some devices, emojis may not render identically
+      // For clearing (status === null), omit loading_messages entirely.
+      await this.slackAPI.assistant.threads.setStatus({
+        channel_id: slackChannelId,
+        thread_ts: slackThreadId,
+        status: status || "",
+        ...(typeof status === "string" && status.length > 0 ? ({} as any) : {}),
+        // The Slack API supports 'loading_messages', but the WebClient types may not include it yet.
+        // We cast to 'any' above only for this field to keep the rest strongly typed.
+        ...(typeof status === "string" && status.length > 0
+          ? ({ loading_messages: [status] } as any)
+          : {}),
+      });
+
+      // Auto-clear lifecycle management.
+      if (status != null && (options?.scheduleAutoClear ?? true)) {
+        this._lastStatusSetAtMs = Date.now();
+        this._scheduleAutoClear(status);
+      } else {
+        if (this._autoClearTimer) clearTimeout(this._autoClearTimer);
+      }
+    } catch (error) {
+      // log error but don't crash DO
+      logger.error("Failed to update Slack status:", error);
+    }
+  }
+
+  // Keep checking until it's safe to clear: no queue, LLM idle, and status unchanged.
+  private _scheduleAutoClear(expectedStatus: string) {
+    if (this._autoClearTimer) clearTimeout(this._autoClearTimer);
+    this._autoClearTimer = setTimeout(() => {
+      // If a new status arrived or status changed, abandon this clear cycle.
+      if (this._lastTypingStatus !== expectedStatus) return;
+
+      const now = Date.now();
+      // Never clear if there is an ongoing LLM request (slow tool calls should keep status visible).
+      if (this.agentCore.llmRequestInProgress()) {
+        this._scheduleAutoClear(expectedStatus);
+        return;
+      }
+
+      // If still more statuses queued, wait for them to flush first.
+      if (this._statusQueue.length > 0) {
+        if (now - this._lastStatusSetAtMs >= this.STATUS_HARD_CLEAR_TTL_MS) {
+          this.updateSlackStatusDebounced(null, { forceImmediate: true });
+        } else {
+          this._scheduleAutoClear(expectedStatus);
+        }
+        return;
+      }
+
+      // Safe to clear.
+      this.updateSlackStatusDebounced(null, { forceImmediate: true });
+    }, this.STATUS_AUTO_CLEAR_MS);
+  }
+
+  /**
+   * Slack clears the thread status indicator whenever a message is posted.
+   * To avoid a jarring UX where our status disappears after we send a message,
+   * call this to re-assert the most recently sent status immediately.
+   *
+   * This bypasses debouncing and forces a resend even if the status hasn't changed.
+   */
+  private async refreshSlackStatus() {
+    // Only resend if we previously sent a non-null status
+    if (this._lastTypingStatus != null) {
+      await this._sendStatusToSlack(this._lastTypingStatus, { forceSendEvenIfSame: true });
+    }
+  }
 
   private checkAndClearTypingIndicator = pDebounce(async () => {
     const state = this.agentCore.state as SlackSliceState;
@@ -139,8 +321,38 @@ export class SlackAgent extends IterateAgent<SlackAgentSlices> implements ToolsI
     };
   }
 
+  override async onStart(): Promise<void> {
+    await super.onStart();
+
+    // On DO boot, set Slack status to null straight away if we already know the thread context
+    // (a subsequent LLM request may set it to something else)
+    const { slackChannelId, slackThreadId } = this.getReducedState() as SlackSliceState;
+    if (slackChannelId && slackThreadId) {
+      this.updateSlackStatusDebounced(null, { forceImmediate: true });
+      if (this._autoClearTimer) clearTimeout(this._autoClearTimer);
+    }
+  }
+
   protected getExtraDependencies(deps: AgentCoreDeps) {
     return {
+      onLLMStreamResponseStreamingChunk: (chunk: ResponseStreamEvent) => {
+        deps?.onLLMStreamResponseStreamingChunk?.(chunk);
+        if (chunk.type === "response.output_item.added" && chunk.item.type === "function_call") {
+          const toolName = chunk.item.name;
+          // Look up the tool to check if it has a custom status indicator text
+          const tool = this.agentCore.state.runtimeTools.find(
+            (t) => t.type === "function" && t.name === toolName,
+          );
+          const statusText =
+            tool && tool.type === "function" && tool.statusIndicatorText
+              ? tool.statusIndicatorText
+              : `🛠️ ${toolName}...`;
+          this.updateSlackStatusDebounced(statusText);
+          // Schedule auto-clear in case this tool completes quickly with no further activity.
+          // The auto-clear will keep polling until it's safe to clear; harmless if more updates arrive.
+          if (typeof statusText === "string") this._scheduleAutoClear(statusText);
+        }
+      },
       onEventAdded: (payload: {
         event: AgentCoreEvent;
         reducedState: CoreReducedState;
@@ -153,21 +365,16 @@ export class SlackAgent extends IterateAgent<SlackAgentSlices> implements ToolsI
         const event = payload.event as AgentCoreEvent;
         switch (event.type) {
           case "CORE:LLM_REQUEST_START":
-            this.agentCore.addEvents([
-              {
-                type: "SLACK:UPDATE_TYPING_STATUS",
-                data: { status: "is typing..." },
-              },
-            ]);
+            // Do not set a default "is thinking..." status anymore
             break;
 
           case "CORE:LLM_REQUEST_CANCEL":
-            this.agentCore.addEvents([
-              {
-                type: "SLACK:UPDATE_TYPING_STATUS",
-                data: { status: null },
-              },
-            ]);
+            // this.agentCore.addEvents([
+            //   {
+            //     type: "SLACK:UPDATE_TYPING_STATUS",
+            //     data: { status: null },
+            //   },
+            // ]);
             break;
           case "CORE:FILE_SHARED": {
             const fileSharedEvent = payload.event as AgentCoreEvent & { type: "CORE:FILE_SHARED" };
@@ -197,9 +404,9 @@ export class SlackAgent extends IterateAgent<SlackAgentSlices> implements ToolsI
           }
         }
 
-        if (event.type !== "CORE:LOG") {
-          this.syncTypingIndicator();
-        }
+        // if (event.type !== "CORE:LOG") {
+        //   this.syncTypingIndicator();
+        // }
       },
       getFinalRedirectUrl: async (_payload: { durableObjectInstanceName: string }) => {
         return await this.getSlackPermalink();
@@ -791,13 +998,20 @@ export class SlackAgent extends IterateAgent<SlackAgentSlices> implements ToolsI
     const magic: MagicAgentInstructions = {};
     if (endTurn) {
       magic.__triggerLLMRequest = false;
-      this.agentCore.addEvents([
-        {
-          type: "SLACK:UPDATE_TYPING_STATUS",
-          data: { status: null },
-        },
-      ]);
-      this.syncTypingIndicator();
+      // this.agentCore.addEvents([
+      //   {
+      //     type: "SLACK:UPDATE_TYPING_STATUS",
+      //     data: { status: null },
+      //   },
+      // ]);
+      // this.syncTypingIndicator();
+      // When ending the turn we want no status, so don't refresh.
+    } else {
+      // Posting a message clears Slack's thread status indicator, which looks jarring if
+      // we were showing a tool/status message. Re-assert the last status immediately to
+      // preserve continuity. This bypasses debouncing and forces a resend even if unchanged.
+      // Do not schedule auto-clear for this refresh; Slack will clear it again on the next message.
+      await this.refreshSlackStatus();
     }
 
     // return an empty object to conserve tokens in the success case, plus magic flags if any
