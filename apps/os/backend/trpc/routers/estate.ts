@@ -1,5 +1,12 @@
+import { Readable } from "node:stream";
+import { createGunzip } from "node:zlib";
+import * as semver from "semver";
+import * as tarStream from "tar-stream";
+import * as fflate from "fflate";
 import { z } from "zod";
 import { eq, desc, and } from "drizzle-orm";
+import dedent from "dedent";
+import { Octokit } from "octokit";
 import {
   protectedProcedure,
   estateProtectedProcedure,
@@ -16,6 +23,53 @@ import type { DB } from "../../db/client.ts";
 import type { CloudflareEnv } from "../../../env.ts";
 import type { OnboardingData } from "../../agent/onboarding-agent.ts";
 import { getAgentStubByName, toAgentClassName } from "../../agent/agents/stub-getters.ts";
+import { logger } from "../../tag-logger.ts";
+import { CreateCommitOnBranchInput } from "./CreateCommitOnBranchInput.ts";
+
+const iterateBotGithubProcedure = estateProtectedProcedure.use(async ({ ctx, next }) => {
+  const githubStuff = await getGithubInstallationForEstate(ctx.db, ctx.estate.id);
+  if (!githubStuff) {
+    throw new Error("GitHub installation not found for this estate");
+  }
+  if (!ctx.estate.connectedRepoId) {
+    throw new Error("No GitHub repository connected to this estate");
+  }
+  const { repoData, installationToken } = await getRepoDetails(
+    ctx.estate.connectedRepoId,
+    githubStuff.accountId,
+  );
+  return next({
+    ctx: { ...ctx, repoData, installationToken, refName: ctx.estate.connectedRepoRef },
+  });
+});
+
+async function getRepoDetails(repoId: number, installationId: string) {
+  const installationToken = await getGithubInstallationToken(installationId);
+
+  // Get repository details
+  const repoResponse = await fetch(`https://api.github.com/repositories/${repoId}`, {
+    headers: {
+      Authorization: `Bearer ${installationToken}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "Iterate OS",
+    },
+  });
+
+  if (!repoResponse.ok) {
+    throw new Error("Failed to fetch repository details");
+  }
+
+  const repoData = z
+    .object({
+      id: z.number(),
+      full_name: z.string(),
+      html_url: z.string(),
+      clone_url: z.string(),
+    })
+    .parse(await repoResponse.json());
+
+  return { repoData, installationToken };
+}
 
 // Helper function to trigger a rebuild for a given commit
 export async function triggerEstateRebuild(params: {
@@ -44,32 +98,10 @@ export async function triggerEstateRebuild(params: {
   }
 
   // Get installation token
-  const installationToken = await getGithubInstallationToken(githubInstallation.accountId);
-
-  // Get repository details
-  const repoResponse = await fetch(
-    `https://api.github.com/repositories/${estateWithRepo.connectedRepoId}`,
-    {
-      headers: {
-        Authorization: `Bearer ${installationToken}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "Iterate OS",
-      },
-    },
+  const { repoData, installationToken } = await getRepoDetails(
+    estateWithRepo.connectedRepoId,
+    githubInstallation.accountId,
   );
-
-  if (!repoResponse.ok) {
-    throw new Error("Failed to fetch repository details");
-  }
-
-  const repoData = z
-    .object({
-      id: z.number(),
-      full_name: z.string(),
-      html_url: z.string(),
-      clone_url: z.string(),
-    })
-    .parse(await repoResponse.json());
 
   // Use the common build trigger function
   return await triggerGithubBuild({
@@ -181,6 +213,201 @@ export const estateRouter = router({
         createdAt: updatedEstate[0].createdAt,
         updatedAt: updatedEstate[0].updatedAt,
       };
+    }),
+
+  updateRepo: iterateBotGithubProcedure
+    .input(
+      z.object({
+        commit: CreateCommitOnBranchInput.omit({ branch: true }),
+        format: z.enum(["base64", "plaintext"]),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      if (input.format === "plaintext") {
+        input.commit.fileChanges.additions?.forEach((addition) => {
+          addition.contents = Buffer.from(addition.contents).toString("base64");
+        });
+      }
+      const github = new Octokit({ auth: ctx.installationToken });
+      const result = await github.graphql(
+        dedent`
+          mutation ($input: CreateCommitOnBranchInput!) {
+            createCommitOnBranch(input: $input) {
+              commit {
+                url
+              }
+            }
+          }
+        `,
+        {
+          input: {
+            ...input.commit,
+            branch: {
+              branchName: ctx.estate.connectedRepoRef!,
+              repositoryNameWithOwner: ctx.repoData.full_name,
+            },
+          } satisfies CreateCommitOnBranchInput,
+        },
+      );
+      return result;
+    }),
+  getRepoFilesystem: iterateBotGithubProcedure.query(async ({ ctx }) => {
+    const zipballResponse = await fetch(
+      `https://api.github.com/repos/${ctx.repoData.full_name}/zipball/${ctx.refName}`,
+      { headers: { Authorization: `Bearer ${ctx.installationToken}`, "User-Agent": "Iterate OS" } },
+    );
+
+    if (!zipballResponse.ok) {
+      throw new Error(
+        `Failed to fetch zipball ${zipballResponse.url}: ${await zipballResponse.text()}`,
+      );
+    }
+
+    const zipball = await zipballResponse.arrayBuffer();
+    const unzipped = fflate.unzipSync(new Uint8Array(zipball));
+
+    const filesystem: Record<string, string | null> = Object.fromEntries(
+      Object.entries(unzipped)
+        .map(([filename, data]) => [
+          filename.split("/").slice(1).join("/"), // root directory is `${owner}-${repo}-${sha}`
+          fflate.strFromU8(data),
+        ])
+        .filter(([k, v]) => !k.endsWith("/") && v.trim()),
+    );
+    const sha = Object.keys(unzipped)[0].split("/")[0].split("-").pop()!;
+    return { repoData: ctx.repoData, filesystem, sha };
+  }),
+
+  getDTS: protectedProcedure
+    .input(
+      z.object({
+        packageJson: z.object({
+          dependencies: z.record(z.string(), z.string()).optional(),
+          devDependencies: z.record(z.string(), z.string()).optional(),
+        }),
+      }),
+    )
+    .query(async ({ input }) => {
+      // todo: consider moving to frontend? will break api.github.com requests unless a cors proxy is used
+      // who needs pnpm when you can just fetch the tarball and extract the dts files?
+      const deps = { ...input.packageJson.dependencies, ...input.packageJson.devDependencies };
+      type GottenPackage = {
+        packageJson: import("type-fest").PackageJson;
+        files: Record<string, string>;
+      };
+      const getPackage = async (name: string, version: string): Promise<GottenPackage> => {
+        if (version.startsWith("github:")) {
+          const [ownerAndRepo, ref = "main"] = version.replace("github:", "").split("#");
+          const zipballUrl = `https://api.github.com/repos/${ownerAndRepo}/zipball/${ref}`;
+          const zipballResponse = await fetch(zipballUrl, {
+            headers: { "User-Agent": "iterate.com OS" },
+          });
+
+          if (!zipballResponse.ok) {
+            throw new Error(`Failed to fetch zipball: ${await zipballResponse.text()}`);
+          }
+
+          const zipball = await zipballResponse.arrayBuffer();
+          const unzipped = fflate.unzipSync(new Uint8Array(zipball));
+
+          const filesystem: Record<string, string> = Object.fromEntries(
+            Object.entries(unzipped)
+              .map(([zipballPath, data]) => {
+                const filename = zipballPath.split("/").slice(1).join("/"); // root dir is `${owner}-${repo}-${sha}`
+                return [filename, data] as const;
+              })
+              .filter(([filename]) => filename.endsWith(".d.ts") || filename === "package.json")
+              .map(([filename, data]) => [filename, fflate.strFromU8(data)])
+              .filter(([k, v]) => !k.endsWith("/") && v.trim()),
+          );
+          return { files: filesystem, packageJson: JSON.parse(filesystem["package.json"]!) };
+        }
+        const url = version?.match(/^https?:/)
+          ? version
+          : `https://registry.npmjs.org/${name}/-/${name}-${version.replace(/^[~^]/, "")}.tgz`;
+        const res = await fetch(url);
+        const extract = tarStream.extract({});
+
+        // Load into buffer first to avoid streaming issues in Workers
+        const buffer = Buffer.from(await res.arrayBuffer());
+
+        const files: Record<string, string> = {};
+
+        // eslint-disable-next-line no-async-promise-executor -- can't be bothered to avoid async await in this one case
+        await new Promise<void>(async (resolve, reject) => {
+          const nodeStream = Readable.from(buffer);
+
+          nodeStream.on("error", (error) => {
+            logger.error("nodeStream error", error);
+            reject(error);
+          });
+
+          const gunzip = createGunzip();
+
+          gunzip.on("error", (error) => {
+            logger.error("gunzip error", error);
+            reject(error);
+          });
+
+          nodeStream.pipe(gunzip).pipe(extract);
+
+          for await (const entry of extract) {
+            const tgzPath = entry.header.name;
+            const filename = tgzPath.replace("package/", "");
+            const isInteresting = filename.endsWith(".d.ts") || filename === "package.json";
+            if (!isInteresting) {
+              entry.resume();
+              continue;
+            }
+            const chunks: Buffer[] = [];
+            for await (const chunk of entry) {
+              chunks.push(chunk);
+            }
+            const content = Buffer.concat(chunks).toString("utf-8");
+            files[filename] = content;
+          }
+          resolve();
+        });
+        const packageJson = JSON.parse(files["package.json"]!) as import("type-fest").PackageJson;
+
+        if (!packageJson.name) {
+          throw new Error(`Couldn't find valid package.json for ${name}@${version}`);
+        }
+        return { packageJson, files };
+      };
+
+      const packages: GottenPackage[] = [];
+      const remainingDeps = { ...deps };
+      for (let i = 100; i >= 0 && Object.keys(remainingDeps).length > 0; i--) {
+        if (i === 0)
+          throw new Error("Too many dependencies: " + Object.keys(remainingDeps).join(", "));
+        for (const [name, version] of Object.entries(remainingDeps)) {
+          const existing = packages.find(
+            (p) => p.packageJson.name === name && semver.satisfies(p.packageJson.version!, version),
+          );
+          delete remainingDeps[name];
+          if (existing) {
+            logger.debug(
+              `package ${name}@${existing.packageJson.version} exists and matches ${version}`,
+            );
+            continue;
+          }
+          logger.debug(`package ${name}@${version} not found, getting it...`);
+          const pkg = await getPackage(name, version);
+          logger.debug(`package ${name}@${version} gotten.`);
+          packages.push(pkg);
+          for (const [depName, depVersion] of Object.entries(pkg.packageJson.dependencies ?? {})) {
+            logger.debug(
+              `adding dependency ${depName}@${depVersion} to remaining deps because it's a dependency of ${name}@${version}`,
+            );
+            remainingDeps[depName] = depVersion!;
+          }
+        }
+      }
+      logger.debug(
+        `got ${packages.length} packages: ${packages.map((p) => p.packageJson.name).join(", ")}`,
+      );
+      return packages;
     }),
 
   // Get builds for an estate
