@@ -14,6 +14,11 @@ import { getAuth } from "../../auth/auth.ts";
 import { createUserOrganizationAndEstate } from "../../org-utils.ts";
 import { logger } from "../../tag-logger.ts";
 import { E2ETestParams } from "../../utils/test-helpers/onboarding-test-schema.ts";
+import {
+  createTrialSlackConnectChannel,
+  getIterateSlackEstateId,
+} from "../../utils/trial-channel-setup.ts";
+import { env } from "../../../env.ts";
 import { deleteUserAccount } from "./user.ts";
 
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -370,7 +375,27 @@ export const adminRouter = router({
         });
       }
 
-      return await syncSlackForEstateInBackground(ctx.db, slackToken, input.estateId);
+      // Get team ID from provider estate mapping
+      const estateMapping = await ctx.db.query.providerEstateMapping.findFirst({
+        where: and(
+          eq(schema.providerEstateMapping.internalEstateId, input.estateId),
+          eq(schema.providerEstateMapping.providerId, "slack-bot"),
+        ),
+      });
+
+      if (!estateMapping) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "No Slack team mapping found for this estate",
+        });
+      }
+
+      return await syncSlackForEstateInBackground(
+        ctx.db,
+        slackToken,
+        input.estateId,
+        estateMapping.externalId,
+      );
     }),
   syncSlackForAllEstates: adminProcedure.mutation(async ({ ctx }) => {
     return await syncSlackForAllEstatesHelper(ctx.db);
@@ -438,6 +463,161 @@ export const adminRouter = router({
         stripeCustomerId: customer.id,
       };
     }),
+
+  /**
+   * Admin endpoint to manually create a trial Slack Connect channel
+   * Can create a new estate/org or use an existing one
+   */
+  createTrialSlackChannel: adminProcedure
+    .input(
+      z.object({
+        userEmail: z.string().email(),
+        userName: z.string().optional(),
+        existingEstateId: z.string().optional(),
+        createNewEstate: z.boolean().default(true),
+        estateName: z.string().optional(),
+        organizationName: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const {
+        userEmail,
+        userName,
+        existingEstateId,
+        createNewEstate,
+        estateName,
+        organizationName,
+      } = input;
+
+      let estateId = existingEstateId;
+      let organizationId: string | undefined;
+
+      // Create estate/org if needed
+      if (createNewEstate) {
+        const [org] = await ctx.db
+          .insert(schema.organization)
+          .values({
+            name: organizationName || `${userName || userEmail}'s Organization`,
+          })
+          .returning();
+
+        const [estate] = await ctx.db
+          .insert(schema.estate)
+          .values({
+            name: estateName || `${userName || userEmail}'s Estate`,
+            organizationId: org.id,
+          })
+          .returning();
+
+        estateId = estate.id;
+        organizationId = org.id;
+
+        logger.info(`Admin created new org ${org.id} and estate ${estate.id} for trial channel`);
+      } else if (!existingEstateId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Either createNewEstate must be true or existingEstateId must be provided",
+        });
+      } else {
+        // Get org ID from existing estate
+        const estate = await ctx.db.query.estate.findFirst({
+          where: eq(schema.estate.id, existingEstateId),
+        });
+        if (!estate) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Estate not found",
+          });
+        }
+        organizationId = estate.organizationId;
+      }
+
+      // Get iterate's Slack workspace estate
+      const iterateTeamId = env.SLACK_ITERATE_TEAM_ID;
+      if (!iterateTeamId) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Iterate Slack workspace not configured (missing SLACK_ITERATE_TEAM_ID)",
+        });
+      }
+
+      const iterateEstateId = await getIterateSlackEstateId(ctx.db, iterateTeamId);
+      if (!iterateEstateId) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Iterate Slack workspace estate not found",
+        });
+      }
+
+      // Get iterate's bot account and token
+      const iterateBotAccountResult = await ctx.db
+        .select({
+          accountId: schema.account.id,
+          accessToken: schema.account.accessToken,
+        })
+        .from(schema.estateAccountsPermissions)
+        .innerJoin(
+          schema.account,
+          eq(schema.estateAccountsPermissions.accountId, schema.account.id),
+        )
+        .where(
+          and(
+            eq(schema.estateAccountsPermissions.estateId, iterateEstateId),
+            eq(schema.account.providerId, "slack-bot"),
+          ),
+        )
+        .limit(1);
+
+      if (!iterateBotAccountResult[0]?.accessToken) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Iterate Slack bot account not found",
+        });
+      }
+
+      const iterateBotToken = iterateBotAccountResult[0].accessToken;
+      const iterateBotAccountId = iterateBotAccountResult[0].accountId;
+
+      // Link trial estate to iterate's bot account
+      await ctx.db
+        .insert(schema.estateAccountsPermissions)
+        .values({
+          accountId: iterateBotAccountId,
+          estateId: estateId!,
+        })
+        .onConflictDoNothing();
+
+      logger.info(`Linked trial estate ${estateId} to iterate's bot account`);
+
+      // Create trial channel and send invite
+      const result = await createTrialSlackConnectChannel({
+        db: ctx.db,
+        userEstateId: estateId!,
+        userEmail,
+        userName: userName || userEmail.split("@")[0],
+        iterateTeamId,
+        iterateBotToken,
+      });
+
+      if (!result.success) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: result.message,
+        });
+      }
+
+      logger.info(
+        `Admin created trial channel ${result.channelName} for ${userEmail} → estate ${estateId}`,
+      );
+
+      return {
+        success: true,
+        estateId: estateId!,
+        organizationId,
+        channelId: result.channelId,
+        channelName: result.channelName,
+      };
+    }),
 });
 
 /**
@@ -460,7 +640,29 @@ export async function syncSlackForAllEstatesHelper(db: DB) {
         };
       }
 
-      const result = await syncSlackForEstateInBackground(db, slackToken, estate.id);
+      // Get team ID from provider estate mapping
+      const estateMapping = await db.query.providerEstateMapping.findFirst({
+        where: and(
+          eq(schema.providerEstateMapping.internalEstateId, estate.id),
+          eq(schema.providerEstateMapping.providerId, "slack-bot"),
+        ),
+      });
+
+      if (!estateMapping) {
+        return {
+          estateId: estate.id,
+          estateName: estate.name,
+          success: false,
+          error: "No Slack team mapping found",
+        };
+      }
+
+      const result = await syncSlackForEstateInBackground(
+        db,
+        slackToken,
+        estate.id,
+        estateMapping.externalId,
+      );
 
       return {
         estateId: estate.id,
